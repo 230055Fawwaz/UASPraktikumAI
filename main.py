@@ -272,7 +272,7 @@ elif menu == "✏️ Edit Data":
                     if st.button("✏️", key=f"edit_dosen_{idx}"):
                         # Set data untuk edit
                         hari_list = str(row["preferensi_hari"]).split(",") if pd.notna(row["preferensi_hari"]) and str(row["preferensi_hari"]) != "" else []
-                        sesi_list = [int(x) for x in str(row["preferensi_sesi"]).split(",") if x.strip()] if pd.notna(row["preferensi_sesi"]) and str(row["preferensi_sesi"]) != "" else []
+                        sesi_list = [int(float(x)) for x in str(row["preferensi_sesi"]).split(",") if x.strip()] if pd.notna(row["preferensi_sesi"]) and str(row["preferensi_sesi"]) != "" else []
                         
                         st.session_state.edit_dosen_data = {
                             "index": idx,
