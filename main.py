@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 from data_loader import load_all_data
-from UASPraktikumAI.scheduler import jadwalkan_ai as jadwalkan
+from scheduler import jadwalkan_ai as jadwalkan
 
 st.set_page_config(page_title="AI Penjadwalan Kuliah", layout="wide")
 
