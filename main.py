@@ -200,10 +200,21 @@ elif menu == "✏️ Edit Data":
                     kode = st.text_input("Kode Dosen", value=edit_data["kode"])
                     nama = st.text_input("Nama Dosen", value=edit_data["nama"])
                 with col2:
-                    hari = st.multiselect("Preferensi Hari", ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"], 
-                                        default=edit_data["hari"] if edit_data["hari"] else [])
-                    sesi = st.multiselect("Preferensi Sesi", [1, 2, 3, 4, 5], 
-                                        default=edit_data["sesi"] if edit_data["sesi"] else [])
+                    hari_opsi = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
+                    sesi_opsi = [1, 2, 3, 4, 5]
+
+                    default_hari = [h.strip() for h in edit_data.get("hari", []) if h.strip() in hari_opsi]
+                    default_sesi = []
+                    for s in edit_data.get("sesi", []):
+                        try:
+                            val = int(float(s))
+                            if val in sesi_opsi:
+                                default_sesi.append(val)
+                        except:
+                            continue
+
+                    hari = st.multiselect("Preferensi Hari", hari_opsi, default=default_hari)
+                    sesi = st.multiselect("Preferensi Sesi", sesi_opsi, default=default_sesi)
                 
                 col1, col2 = st.columns(2)
                 with col1:
