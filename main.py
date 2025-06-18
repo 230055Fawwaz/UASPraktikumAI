@@ -1,6 +1,7 @@
 # main.py
 import streamlit as st
 import pandas as pd
+import os
 from pathlib import Path
 from data_loader import load_all_data
 from scheduler import jadwalkan_ai as jadwalkan
@@ -41,6 +42,15 @@ def save_dataframe_to_csv(df, filename):
     file_path = DATA_DIR / filename
     df.to_csv(file_path, index=False)
     return file_path
+
+def reset_csv():
+    for fname in ["matkul.csv", "dosen.csv", "kelas.csv", "ruangan.csv"]:
+        f = DATA_DIR / fname
+        if f.exists():
+            f.unlink()  # hapus file
+
+# Jalankan hanya saat startup
+reset_csv()
 
 # === MENU 1: UPLOAD DATA CSV ===
 if menu == "📤 Upload Data CSV":
