@@ -43,14 +43,16 @@ def save_dataframe_to_csv(df, filename):
     df.to_csv(file_path, index=False)
     return file_path
 
-def reset_csv():
-    for fname in ["matkul.csv", "dosen.csv", "kelas.csv", "ruangan.csv"]:
-        f = DATA_DIR / fname
-        if f.exists():
-            f.unlink()  # hapus file
-
-# Jalankan hanya saat startup
-reset_csv()
+if "initialized" not in st.session_state:
+    # Hanya dijalankan sekali saat aplikasi pertama kali dibuka
+    def reset_csv():
+        for fname in ["matkul.csv", "dosen.csv", "kelas.csv", "ruangan.csv"]:
+            f = DATA_DIR / fname
+            if f.exists():
+                f.unlink()
+    
+    reset_csv()
+    st.session_state.initialized = True  # Set flag agar tidak ulangi reset
 
 # === MENU 1: UPLOAD DATA CSV ===
 if menu == "📤 Upload Data CSV":
