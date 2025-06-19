@@ -1,12 +1,19 @@
 # main.py
 import streamlit as st
 import pandas as pd
-import os
+import time
 from pathlib import Path
 from data_loader import load_all_data
 from scheduler import jadwalkan_ai as jadwalkan
+import base64
 
-st.set_page_config(page_title="AI Penjadwalan Kuliah", layout="wide")
+# === KONFIGURASI HALAMAN ===
+st.set_page_config(
+    page_title="AI Penjadwalan Kuliah",
+    layout="wide",
+    page_icon="📅",
+    initial_sidebar_state="expanded"
+)
 
 # === SETUP FOLDER ===
 DATA_DIR = Path("data")
@@ -21,857 +28,625 @@ JADWAL_PATH = OUTPUT_DIR / "jadwal_kuliah.csv"
 st.sidebar.title("📅 Menu Navigasi")
 menu = st.sidebar.selectbox(
     "Pilih Menu:",
-    ["📤 Upload Data CSV", "✏️ Edit Data", "🔄 Jadwal & Reset"]
+    ["🏠 Beranda", "📤 Upload Data", "✏️ Edit Data", "🤖 Generate Jadwal", "📋 Hasil Jadwal"]
 )
 
-st.title("📅 Sistem Penjadwalan Kuliah Otomatis Berbasis AI")
-
 # === FUNGSI HELPER ===
-def upload_and_preview(label, key):
-    file = st.file_uploader(label, type=['csv'], key=key)
-    if file:
-        df = pd.read_csv(file)
-        df.to_csv(DATA_DIR / f"{key}.csv", index=False)
-        st.success(f"File {key}.csv berhasil diunggah!")
-        st.dataframe(df)
-        return df
-    return None
+def create_template_download():
+    # Buat template dalam bentuk zip
+    import zipfile
+    from io import BytesIO
+    
+    # Buat DataFrame untuk masing-masing template
+    template_matkul = pd.DataFrame(columns=["kode_matkul", "nama_matkul", "sks", "kelas", "dosen"])
+    template_dosen = pd.DataFrame(columns=["kode_dosen", "nama_dosen", "preferensi_hari", "preferensi_sesi"])
+    template_kelas = pd.DataFrame(columns=["kode_kelas", "jumlah_mahasiswa"])
+    template_ruangan = pd.DataFrame(columns=["kode_ruang", "kapasitas", "tersedia_hari", "tersedia_sesi"])
+    
+    # Tambahkan contoh data
+    template_matkul.loc[0] = ["MK001", "Kalkulus", 3, "A1", "D001"]
+    template_dosen.loc[0] = ["D001", "Dr. Ahmad", "Senin,Selasa", "1,2"]
+    template_kelas.loc[0] = ["A1", 40]
+    template_ruangan.loc[0] = ["R101", 50, "Senin,Selasa,Rabu", "1,2,3"]
+    
+    # Buat file zip di memori
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
+        zip_file.writestr('matkul_template.csv', template_matkul.to_csv(index=False))
+        zip_file.writestr('dosen_template.csv', template_dosen.to_csv(index=False))
+        zip_file.writestr('kelas_template.csv', template_kelas.to_csv(index=False))
+        zip_file.writestr('ruangan_template.csv', template_ruangan.to_csv(index=False))
+    
+    return zip_buffer.getvalue()
 
 def save_dataframe_to_csv(df, filename):
-    """Fungsi untuk menyimpan DataFrame ke CSV"""
     file_path = DATA_DIR / filename
     df.to_csv(file_path, index=False)
     return file_path
 
+def file_exists(file_name):
+    return (DATA_DIR / file_name).exists()
+
+def create_dummy_data():
+    # Buat data dummy untuk demonstrasi
+    matkul = pd.DataFrame({
+        "kode_matkul": ["MK001", "MK002", "MK003"],
+        "nama_matkul": ["Kalkulus", "Fisika Dasar", "Pemrograman"],
+        "sks": [3, 3, 4],
+        "kelas": ["A1", "A2", "B1"],
+        "dosen": ["D001", "D002", "D003"]
+    })
+    
+    dosen = pd.DataFrame({
+        "kode_dosen": ["D001", "D002", "D003"],
+        "nama_dosen": ["Dr. Ahmad", "Prof. Budi", "Dr. Citra"],
+        "preferensi_hari": ["Senin,Selasa", "Rabu,Kamis", "Jumat"],
+        "preferensi_sesi": ["1,2", "3,4", "1,2,3"]
+    })
+    
+    kelas = pd.DataFrame({
+        "kode_kelas": ["A1", "A2", "B1"],
+        "jumlah_mahasiswa": [40, 35, 30]
+    })
+    
+    ruangan = pd.DataFrame({
+        "kode_ruang": ["R101", "R102", "R201"],
+        "kapasitas": [50, 45, 40],
+        "tersedia_hari": ["Senin,Selasa,Rabu", "Kamis,Jumat", "Senin-Selasa-Rabu-Kamis-Jumat"],
+        "tersedia_sesi": ["1,2,3", "1,2,3,4", "1,2,3,4,5"]
+    })
+    
+    matkul.to_csv(DATA_DIR / "matkul.csv", index=False)
+    dosen.to_csv(DATA_DIR / "dosen.csv", index=False)
+    kelas.to_csv(DATA_DIR / "kelas.csv", index=False)
+    ruangan.to_csv(DATA_DIR / "ruangan.csv", index=False)
+    st.success("✅ Data demo berhasil dibuat!")
+
+# Inisialisasi data
 if "initialized" not in st.session_state:
     # Hanya dijalankan sekali saat aplikasi pertama kali dibuka
-    def reset_csv():
-        for fname in ["matkul.csv", "dosen.csv", "kelas.csv", "ruangan.csv"]:
-            f = DATA_DIR / fname
-            if f.exists():
-                f.unlink()
-    
-    reset_csv()
-    st.session_state.initialized = True  # Set flag agar tidak ulangi reset
+    st.session_state.initialized = True
+    st.session_state.use_dummy_data = False
 
-# === MENU 1: UPLOAD DATA CSV ===
-if menu == "📤 Upload Data CSV":
-    st.header("📤 Upload File CSV")
-    st.markdown("Silakan upload file CSV untuk masing-masing data:")
+# === HALAMAN BERANDA ===
+if menu == "🏠 Beranda":
+    st.title("📅 Sistem Penjadwalan Kuliah Otomatis Berbasis AI")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        df_matkul = upload_and_preview("📘 Data Mata Kuliah", "matkul")
-        df_kelas = upload_and_preview("👥 Data Kelas Mahasiswa", "kelas")
-
-    with col2:
-        df_dosen = upload_and_preview("👨‍🏫 Data Dosen Pengampu", "dosen")
-        df_ruangan = upload_and_preview("🏫 Data Ruangan", "ruangan")
-    
-    st.info("💡 **Format CSV yang diharapkan:**")
-    st.markdown("""
-    - **Dosen**: `kode_dosen, nama_dosen, preferensi_hari, preferensi_sesi`
-    - **Kelas**: `kode_kelas, jumlah_mahasiswa`
-    - **Mata Kuliah**: `kode_matkul, nama_matkul, sks, kelas, dosen`
-    - **Ruangan**: `kode_ruang, kapasitas, tersedia_hari, tersedia_sesi`
+    # Hapus class success-box
+    st.info("""
+    **Selamat datang di Sistem Penjadwalan Kuliah Otomatis!**\n
+    Sistem ini menggunakan algoritma AI untuk menghasilkan jadwal kuliah optimal berdasarkan preferensi dosen, ketersediaan ruangan, dan kebutuhan mata kuliah.
     """)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.subheader("📋 Fitur Utama")
+        st.markdown("""
+        - Upload data via CSV atau input manual
+        - Edit data secara interaktif
+        - Generate jadwal otomatis berbasis AI
+        - Ekspor jadwal ke format CSV
+        - Visualisasi jadwal kuliah
+        """)
+    
+    with col2:
+        st.subheader("🚀 Cara Menggunakan")
+        st.markdown("""
+        1. Upload data melalui menu **Upload Data**
+        2. Edit data di menu **Edit Data**
+        3. Generate jadwal di menu **Generate Jadwal**
+        4. Lihat hasil di menu **Hasil Jadwal**
+        """)
+    
+    with col3:
+        st.subheader("📊 Keunggulan")
+        st.markdown("""
+        - Optimasi penggunaan ruangan
+        - Penghindaran konflik jadwal
+        - Memenuhi preferensi dosen
+        - Tampilan visual yang informatif
+        - Proses otomatis dan efisien
+        """)
+    
+    st.markdown("---")
+    st.subheader("⚡ Mulai Cepat")
+    
+    if st.button("🔄 Gunakan Data Demo", use_container_width=True):
+        create_dummy_data()
+        st.session_state.use_dummy_data = True
+        st.success("Data demo berhasil dimuat! Silakan lanjut ke menu Generate Jadwal")
+        time.sleep(1)
+        st.experimental_set_query_params(menu="🤖 Generate Jadwal")
+        st.rerun()
+
+# === MENU 1: UPLOAD DATA ===
+elif menu == "📤 Upload Data":
+    st.title("📤 Upload Data Penjadwalan")
+    
+    tab1, tab2 = st.tabs(["📁 Upload File CSV", "➕ Input Manual"])
+    
+    with tab1:
+        st.header("📁 Upload File CSV")
+        st.markdown("Silakan upload file CSV untuk masing-masing data:")
+        
+        template_zip = create_template_download()
+        st.download_button(
+            label="📥 Download Template CSV",
+            data=template_zip,
+            file_name="template_jadwal.zip",
+            mime="application/zip"
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("📘 Data Mata Kuliah")
+            matkul_file = st.file_uploader("Upload matkul.csv", type=['csv'], key="matkul_upload")
+            if matkul_file:
+                matkul_df = pd.read_csv(matkul_file)
+                matkul_df.to_csv(DATA_DIR / "matkul.csv", index=False)
+                st.success("File matkul.csv berhasil diunggah!")
+                st.dataframe(matkul_df.head())
+            
+            st.subheader("👥 Data Kelas Mahasiswa")
+            kelas_file = st.file_uploader("Upload kelas.csv", type=['csv'], key="kelas_upload")
+            if kelas_file:
+                kelas_df = pd.read_csv(kelas_file)
+                kelas_df.to_csv(DATA_DIR / "kelas.csv", index=False)
+                st.success("File kelas.csv berhasil diunggah!")
+                st.dataframe(kelas_df.head())
+
+        with col2:
+            st.subheader("👨‍🏫 Data Dosen Pengampu")
+            dosen_file = st.file_uploader("Upload dosen.csv", type=['csv'], key="dosen_upload")
+            if dosen_file:
+                dosen_df = pd.read_csv(dosen_file)
+                dosen_df.to_csv(DATA_DIR / "dosen.csv", index=False)
+                st.success("File dosen.csv berhasil diunggah!")
+                st.dataframe(dosen_df.head())
+            
+            st.subheader("🏫 Data Ruangan")
+            ruangan_file = st.file_uploader("Upload ruangan.csv", type=['csv'], key="ruangan_upload")
+            if ruangan_file:
+                ruangan_df = pd.read_csv(ruangan_file)
+                ruangan_df.to_csv(DATA_DIR / "ruangan.csv", index=False)
+                st.success("File ruangan.csv berhasil diunggah!")
+                st.dataframe(ruangan_df.head())
+    
+    with tab2:
+        st.header("➕ Input Manual")
+        st.markdown("Isi data secara manual menggunakan form di bawah ini:")
+        
+        tab_mk, tab_dosen, tab_kelas, tab_ruang = st.tabs(["Mata Kuliah", "Dosen", "Kelas", "Ruangan"])
+        
+        with tab_mk:
+            with st.form("form_matkul_manual"):
+                st.subheader("📝 Tambah Mata Kuliah")
+                kode = st.text_input("Kode Mata Kuliah*", placeholder="MK001")
+                nama = st.text_input("Nama Mata Kuliah*", placeholder="Kalkulus")
+                sks = st.number_input("SKS*", min_value=1, max_value=6, value=3)
+                kelas = st.text_input("Kelas*", placeholder="A1")
+                dosen = st.text_input("Dosen Pengampu*", placeholder="D001")
+                
+                submitted = st.form_submit_button("💾 Simpan Mata Kuliah")
+                if submitted:
+                    if not all([kode, nama, kelas, dosen]):
+                        st.error("Harap isi semua field yang wajib diisi (*)")
+                    else:
+                        new_row = pd.DataFrame([[kode, nama, sks, kelas, dosen]], 
+                                             columns=["kode_matkul", "nama_matkul", "sks", "kelas", "dosen"])
+                        
+                        if file_exists("matkul.csv"):
+                            df = pd.read_csv(DATA_DIR / "matkul.csv")
+                            df = pd.concat([df, new_row], ignore_index=True)
+                        else:
+                            df = new_row
+                            
+                        df.to_csv(DATA_DIR / "matkul.csv", index=False)
+                        st.success("✅ Mata kuliah berhasil ditambahkan!")
+        
+        with tab_dosen:
+            with st.form("form_dosen_manual"):
+                st.subheader("👨‍🏫 Tambah Dosen")
+                kode = st.text_input("Kode Dosen*", placeholder="D001")
+                nama = st.text_input("Nama Dosen*", placeholder="Dr. Ahmad")
+                hari = st.multiselect("Preferensi Hari", ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"], default=["Senin", "Selasa"])
+                sesi = st.multiselect("Preferensi Sesi", [1, 2, 3, 4, 5], default=[1, 2])
+                
+                submitted = st.form_submit_button("💾 Simpan Dosen")
+                if submitted:
+                    if not kode or not nama:
+                        st.error("Harap isi semua field yang wajib diisi (*)")
+                    else:
+                        new_row = pd.DataFrame([[kode, nama, ",".join(hari), ",".join(map(str, sesi))]], 
+                                             columns=["kode_dosen", "nama_dosen", "preferensi_hari", "preferensi_sesi"])
+                        
+                        if file_exists("dosen.csv"):
+                            df = pd.read_csv(DATA_DIR / "dosen.csv")
+                            df = pd.concat([df, new_row], ignore_index=True)
+                        else:
+                            df = new_row
+                            
+                        df.to_csv(DATA_DIR / "dosen.csv", index=False)
+                        st.success("✅ Dosen berhasil ditambahkan!")
+        
+        with tab_kelas:
+            with st.form("form_kelas_manual"):
+                st.subheader("👥 Tambah Kelas")
+                kode = st.text_input("Kode Kelas*", placeholder="A1")
+                jumlah = st.number_input("Jumlah Mahasiswa*", min_value=1, value=40)
+                
+                submitted = st.form_submit_button("💾 Simpan Kelas")
+                if submitted:
+                    if not kode:
+                        st.error("Harap isi semua field yang wajib diisi (*)")
+                    else:
+                        new_row = pd.DataFrame([[kode, jumlah]], 
+                                             columns=["kode_kelas", "jumlah_mahasiswa"])
+                        
+                        if file_exists("kelas.csv"):
+                            df = pd.read_csv(DATA_DIR / "kelas.csv")
+                            df = pd.concat([df, new_row], ignore_index=True)
+                        else:
+                            df = new_row
+                            
+                        df.to_csv(DATA_DIR / "kelas.csv", index=False)
+                        st.success("✅ Kelas berhasil ditambahkan!")
+        
+        with tab_ruang:
+            with st.form("form_ruangan_manual"):
+                st.subheader("🏫 Tambah Ruangan")
+                kode = st.text_input("Kode Ruangan*", placeholder="R101")
+                kapasitas = st.number_input("Kapasitas*", min_value=1, value=50)
+                hari = st.multiselect("Hari Tersedia", ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"], 
+                                    default=["Senin", "Selasa", "Rabu", "Kamis", "Jumat"])
+                sesi = st.multiselect("Sesi Tersedia", [1, 2, 3, 4, 5], default=[1, 2, 3, 4, 5])
+                
+                submitted = st.form_submit_button("💾 Simpan Ruangan")
+                if submitted:
+                    if not kode:
+                        st.error("Harap isi semua field yang wajib diisi (*)")
+                    else:
+                        new_row = pd.DataFrame([[kode, kapasitas, ",".join(hari), ",".join(map(str, sesi))]], 
+                                             columns=["kode_ruang", "kapasitas", "tersedia_hari", "tersedia_sesi"])
+                        
+                        if file_exists("ruangan.csv"):
+                            df = pd.read_csv(DATA_DIR / "ruangan.csv")
+                            df = pd.concat([df, new_row], ignore_index=True)
+                        else:
+                            df = new_row
+                            
+                        df.to_csv(DATA_DIR / "ruangan.csv", index=False)
+                        st.success("✅ Ruangan berhasil ditambahkan!")
 
 # === MENU 2: EDIT DATA ===
 elif menu == "✏️ Edit Data":
-    st.header("✏️ Edit & Kelola Data")
+    st.title("✏️ Edit Data Penjadwalan")
     
-    # Cek apakah ada file yang sudah diupload
+    # Cek ketersediaan data
     files_exist = {
-        "matkul": (DATA_DIR / "matkul.csv").exists(),
-        "dosen": (DATA_DIR / "dosen.csv").exists(),
-        "kelas": (DATA_DIR / "kelas.csv").exists(),
-        "ruangan": (DATA_DIR / "ruangan.csv").exists()
+        "Mata Kuliah": file_exists("matkul.csv"),
+        "Dosen": file_exists("dosen.csv"),
+        "Kelas": file_exists("kelas.csv"),
+        "Ruangan": file_exists("ruangan.csv")
     }
     
+    # Tampilkan status data
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Mata Kuliah", "✅" if files_exist["Mata Kuliah"] else "❌")
+    with col2:
+        st.metric("Dosen", "✅" if files_exist["Dosen"] else "❌")
+    with col3:
+        st.metric("Kelas", "✅" if files_exist["Kelas"] else "❌")
+    with col4:
+        st.metric("Ruangan", "✅" if files_exist["Ruangan"] else "❌")
+    
     if not any(files_exist.values()):
-        st.warning("⚠️ Belum ada data yang diupload. Silakan upload file CSV terlebih dahulu di menu **Upload Data CSV**.")
-        st.info("💡 Atau Anda bisa menambahkan data manual menggunakan form di bawah ini.")
+        st.warning("⚠️ Belum ada data yang diupload. Silakan upload file CSV terlebih dahulu di menu **Upload Data**.")
+        st.info("💡 Atau Anda bisa menambahkan data manual menggunakan form di menu Upload Data.")
+        st.stop()
     
     tab_edit = st.tabs(["📘 Mata Kuliah", "👨‍🏫 Dosen", "👥 Kelas", "🏫 Ruangan"])
     
     # === TAB MATA KULIAH ===
-    with tab_edit[0]:  # Mata Kuliah
-        file = DATA_DIR / "matkul.csv"
-
-        # Inisialisasi session state untuk edit
-        if "edit_matkul_data" not in st.session_state:
-            st.session_state.edit_matkul_data = None
-
-        # Form Tambah Data
-        with st.form("form_matkul"):
-            # Jika ada data untuk diedit, isi form dengan data tersebut
-            if st.session_state.edit_matkul_data is not None:
-                edit_data = st.session_state.edit_matkul_data
-                kode = st.text_input("Kode Mata Kuliah", value=edit_data["kode"])
-                nama = st.text_input("Nama Mata Kuliah", value=edit_data["nama"])
-                sks = st.number_input("Jumlah SKS", min_value=1, max_value=6, step=1, value=int(edit_data["sks"]))
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    submit = st.form_submit_button("💾 Update Mata Kuliah")
-                with col2:
-                    cancel = st.form_submit_button("❌ Batal Edit")
-            else:
-                kode = st.text_input("Kode Mata Kuliah")
-                nama = st.text_input("Nama Mata Kuliah")
-                sks = st.number_input("Jumlah SKS", min_value=1, max_value=6, step=1)
-                submit = st.form_submit_button("Tambah Mata Kuliah")
-                cancel = False
-
-            if cancel:
-                st.session_state.edit_matkul_data = None
-                st.rerun()
-
-            if submit:
-                if st.session_state.edit_matkul_data is not None:
-                    # Mode Update
-                    if file.exists():
-                        df_matkul = pd.read_csv(file)
-                        edit_idx = st.session_state.edit_matkul_data["index"]
-                        df_matkul.at[edit_idx, "kode_matkul"] = kode
-                        df_matkul.at[edit_idx, "nama_matkul"] = nama
-                        df_matkul.at[edit_idx, "sks"] = sks
-                        df_matkul.to_csv(file, index=False)
-                        st.success("✅ Mata kuliah berhasil diupdate!")
-                        st.session_state.edit_matkul_data = None
-                        st.rerun()
-                else:
-                    # Mode Tambah (kode asli Anda)
-                    new_data = pd.DataFrame([[kode, nama, sks]], columns=["kode_matkul", "nama_matkul", "sks"])
-                    if file.exists():
-                        df_matkul = pd.read_csv(file)
-                        df_matkul = pd.concat([df_matkul, new_data], ignore_index=True)
-                    else:
-                        df_matkul = new_data
-                    df_matkul.to_csv(file, index=False)
-                    st.success("✅ Mata kuliah berhasil ditambahkan!")
-                    st.rerun()
-
-        # === Tampilkan & Edit Data yang Ada ===
-        if file.exists():
-            df_matkul = pd.read_csv(file)
-            st.markdown("### 🧾 Daftar Mata Kuliah")
-
-            for idx, row in df_matkul.iterrows():
-                col1, col2, col3, col4, col5 = st.columns([3, 4, 2, 1, 1])
-                with col1:
-                    st.text(row["kode_matkul"])
-                with col2:
-                    st.text(row["nama_matkul"])
-                with col3:
-                    st.text(str(row["sks"]))
-                with col4:
-                    if st.button("✏️", key=f"edit_{idx}"):
-                        # Set data untuk edit
-                        st.session_state.edit_matkul_data = {
-                            "index": idx,
-                            "kode": row["kode_matkul"],
-                            "nama": row["nama_matkul"],
-                            "sks": row["sks"]
-                        }
-                        st.rerun()
-                with col5:
-                    if st.button("🗑️", key=f"hapus_{idx}"):
-                        df_matkul.drop(index=idx, inplace=True)
-                        df_matkul.reset_index(drop=True, inplace=True)
-                        df_matkul.to_csv(file, index=False)
-                        st.rerun()
-
+    with tab_edit[0]:
+        if file_exists("matkul.csv"):
+            df = pd.read_csv(DATA_DIR / "matkul.csv")
+            st.subheader("📘 Data Mata Kuliah")
+            
+            edited_df = st.data_editor(
+                df,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "kode_matkul": st.column_config.TextColumn("Kode*", required=True),
+                    "nama_matkul": st.column_config.TextColumn("Nama*", required=True),
+                    "sks": st.column_config.NumberColumn("SKS*", min_value=1, max_value=6, step=1, required=True),
+                    "kelas": st.column_config.TextColumn("Kelas*", required=True),
+                    "dosen": st.column_config.TextColumn("Dosen*", required=True)
+                }
+            )
+            
+            if st.button("💾 Simpan Perubahan Mata Kuliah", use_container_width=True):
+                edited_df.to_csv(DATA_DIR / "matkul.csv", index=False)
+                st.success("✅ Perubahan data mata kuliah berhasil disimpan!")
+        else:
+            st.warning("Data mata kuliah belum tersedia")
+    
     # === TAB DOSEN ===
     with tab_edit[1]:
-        file = DATA_DIR / "dosen.csv"
-
-        # Inisialisasi session state untuk edit dosen
-        if "edit_dosen_data" not in st.session_state:
-            st.session_state.edit_dosen_data = None
-
-        # Form Tambah/Edit Data Dosen
-        with st.form("form_dosen"):
-            # Jika ada data untuk diedit, isi form dengan data tersebut
-            if st.session_state.edit_dosen_data is not None:
-                edit_data = st.session_state.edit_dosen_data
-                col1, col2 = st.columns(2)
-                with col1:
-                    kode = st.text_input("Kode Dosen", value=edit_data["kode"])
-                    nama = st.text_input("Nama Dosen", value=edit_data["nama"])
-                with col2:
-                    hari_opsi = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-                    sesi_opsi = [1, 2, 3, 4, 5]
-
-                    default_hari = [h.strip() for h in edit_data.get("hari", []) if h.strip() in hari_opsi]
-                    default_sesi = []
-                    for s in edit_data.get("sesi", []):
-                        try:
-                            val = int(float(s))
-                            if val in sesi_opsi:
-                                default_sesi.append(val)
-                        except:
-                            continue
-
-                    hari = st.multiselect("Preferensi Hari", hari_opsi, default=default_hari)
-                    sesi = st.multiselect("Preferensi Sesi", sesi_opsi, default=default_sesi)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    submit = st.form_submit_button("💾 Update Dosen")
-                with col2:
-                    cancel = st.form_submit_button("❌ Batal Edit")
-            else:
-                col1, col2 = st.columns(2)
-                with col1:
-                    kode = st.text_input("Kode Dosen")
-                    nama = st.text_input("Nama Dosen")
-                with col2:
-                    hari = st.multiselect("Preferensi Hari", ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"])
-                    sesi = st.multiselect("Preferensi Sesi", [1, 2, 3, 4, 5])
-                submit = st.form_submit_button("➕ Tambah Dosen")
-                cancel = False
-
-            if cancel:
-                st.session_state.edit_dosen_data = None
-                st.rerun()
-
-            if submit:
-                if st.session_state.edit_dosen_data is not None:
-                    # Mode Update
-                    if file.exists():
-                        df_dosen = pd.read_csv(file)
-                        edit_idx = st.session_state.edit_dosen_data["index"]
-                        df_dosen.at[edit_idx, "kode_dosen"] = kode
-                        df_dosen.at[edit_idx, "nama_dosen"] = nama
-                        df_dosen.at[edit_idx, "preferensi_hari"] = ",".join(hari)
-                        df_dosen.at[edit_idx, "preferensi_sesi"] = ",".join(map(str, sesi))
-                        df_dosen.to_csv(file, index=False)
-                        st.success("✅ Dosen berhasil diupdate!")
-                        st.session_state.edit_dosen_data = None
-                        st.rerun()
-                else:
-                    # Mode Tambah
-                    if kode and nama:
-                        new_data = pd.DataFrame([[kode, nama, ",".join(hari), ",".join(map(str, sesi))]],
-                                              columns=["kode_dosen", "nama_dosen", "preferensi_hari", "preferensi_sesi"])
-                        if file.exists():
-                            df_dosen = pd.read_csv(file)
-                            df_dosen = pd.concat([df_dosen, new_data], ignore_index=True)
-                        else:
-                            df_dosen = new_data
-                        df_dosen.to_csv(file, index=False)
-                        st.success("✅ Dosen berhasil ditambahkan!")
-                        st.rerun()
-
-        # === Tampilkan & Edit Data yang Ada ===
-        if file.exists():
-            df_dosen = pd.read_csv(file)
-            st.markdown("### 🧾 Daftar Dosen")
-
-            for idx, row in df_dosen.iterrows():
-                col1, col2, col3, col4, col5, col6 = st.columns([2, 3, 2, 2, 1, 1])
-                with col1:
-                    st.text(row["kode_dosen"])
-                with col2:
-                    st.text(row["nama_dosen"])
-                with col3:
-                    st.text(str(row["preferensi_hari"]))
-                with col4:
-                    st.text(str(row["preferensi_sesi"]))
-                with col5:
-                    if st.button("✏️", key=f"edit_dosen_{idx}"):
-                        # Set data untuk edit
-                        hari_list = str(row["preferensi_hari"]).split(",") if pd.notna(row["preferensi_hari"]) and str(row["preferensi_hari"]) != "" else []
-                        sesi_list = [int(float(x)) for x in str(row["preferensi_sesi"]).split(",") if x.strip()] if pd.notna(row["preferensi_sesi"]) and str(row["preferensi_sesi"]) != "" else []
-                        
-                        st.session_state.edit_dosen_data = {
-                            "index": idx,
-                            "kode": row["kode_dosen"],
-                            "nama": row["nama_dosen"],
-                            "hari": hari_list,
-                            "sesi": sesi_list
-                        }
-                        st.rerun()
-                with col6:
-                    if st.button("🗑️", key=f"hapus_dosen_{idx}"):
-                        df_dosen.drop(index=idx, inplace=True)
-                        df_dosen.reset_index(drop=True, inplace=True)
-                        df_dosen.to_csv(file, index=False)
-                        st.rerun()
-
+        if file_exists("dosen.csv"):
+            df = pd.read_csv(DATA_DIR / "dosen.csv")
+            df["preferensi_sesi"] = df["preferensi_sesi"].astype(str)
+            st.subheader("👨‍🏫 Data Dosen")
+            
+            edited_df = st.data_editor(
+                df,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "kode_dosen": st.column_config.TextColumn("Kode*", required=True),
+                    "nama_dosen": st.column_config.TextColumn("Nama*", required=True),
+                    "preferensi_hari": st.column_config.TextColumn("Hari Preferensi"),
+                    "preferensi_sesi": st.column_config.TextColumn("Sesi Preferensi")
+                }
+            )
+            
+            if st.button("💾 Simpan Perubahan Dosen", use_container_width=True):
+                edited_df.to_csv(DATA_DIR / "dosen.csv", index=False)
+                st.success("✅ Perubahan data dosen berhasil disimpan!")
+        else:
+            st.warning("Data dosen belum tersedia")
+    
     # === TAB KELAS ===
     with tab_edit[2]:
-        file = DATA_DIR / "kelas.csv"
-
-        # Inisialisasi session state untuk edit kelas
-        if "edit_kelas_data" not in st.session_state:
-            st.session_state.edit_kelas_data = None
-
-        # Form Tambah/Edit Data Kelas
-        with st.form("form_kelas"):
-            # Jika ada data untuk diedit, isi form dengan data tersebut
-            if st.session_state.edit_kelas_data is not None:
-                edit_data = st.session_state.edit_kelas_data
-                kode = st.text_input("Kode Kelas", value=edit_data["kode"])
-                jumlah = st.number_input("Jumlah Mahasiswa", min_value=1, step=1, value=int(edit_data["jumlah"]))
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    submit = st.form_submit_button("💾 Update Kelas")
-                with col2:
-                    cancel = st.form_submit_button("❌ Batal Edit")
-            else:
-                kode = st.text_input("Kode Kelas")
-                jumlah = st.number_input("Jumlah Mahasiswa", min_value=1, step=1)
-                submit = st.form_submit_button("➕ Tambah Kelas")
-                cancel = False
-
-            if cancel:
-                st.session_state.edit_kelas_data = None
-                st.rerun()
-
-            if submit:
-                if st.session_state.edit_kelas_data is not None:
-                    # Mode Update
-                    if file.exists():
-                        df_kelas = pd.read_csv(file)
-                        edit_idx = st.session_state.edit_kelas_data["index"]
-                        df_kelas.at[edit_idx, "kode_kelas"] = kode
-                        df_kelas.at[edit_idx, "jumlah_mahasiswa"] = jumlah
-                        df_kelas.to_csv(file, index=False)
-                        st.success("✅ Kelas berhasil diupdate!")
-                        st.session_state.edit_kelas_data = None
-                        st.rerun()
-                else:
-                    # Mode Tambah
-                    if kode:
-                        new_data = pd.DataFrame([[kode, jumlah]], columns=["kode_kelas", "jumlah_mahasiswa"])
-                        if file.exists():
-                            df_kelas = pd.read_csv(file)
-                            df_kelas = pd.concat([df_kelas, new_data], ignore_index=True)
-                        else:
-                            df_kelas = new_data
-                        df_kelas.to_csv(file, index=False)
-                        st.success("✅ Kelas berhasil ditambahkan!")
-                        st.rerun()
-
-        # === Tampilkan & Edit Data yang Ada ===
-        if file.exists():
-            df_kelas = pd.read_csv(file)
-            st.markdown("### 🧾 Daftar Kelas")
-
-            for idx, row in df_kelas.iterrows():
-                col1, col2, col3, col4 = st.columns([3, 3, 1, 1])
-                with col1:
-                    st.text(row["kode_kelas"])
-                with col2:
-                    st.text(str(row["jumlah_mahasiswa"]))
-                with col3:
-                    if st.button("✏️", key=f"edit_kelas_{idx}"):
-                        # Set data untuk edit
-                        st.session_state.edit_kelas_data = {
-                            "index": idx,
-                            "kode": row["kode_kelas"],
-                            "jumlah": row["jumlah_mahasiswa"]
-                        }
-                        st.rerun()
-                with col4:
-                    if st.button("🗑️", key=f"hapus_kelas_{idx}"):
-                        df_kelas.drop(index=idx, inplace=True)
-                        df_kelas.reset_index(drop=True, inplace=True)
-                        df_kelas.to_csv(file, index=False)
-                        st.rerun()
-
+        if file_exists("kelas.csv"):
+            df = pd.read_csv(DATA_DIR / "kelas.csv")
+            st.subheader("👥 Data Kelas")
+            
+            edited_df = st.data_editor(
+                df,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "kode_kelas": st.column_config.TextColumn("Kode*", required=True),
+                    "jumlah_mahasiswa": st.column_config.NumberColumn("Jumlah*", min_value=1, step=1, required=True)
+                }
+            )
+            
+            if st.button("💾 Simpan Perubahan Kelas", use_container_width=True):
+                edited_df.to_csv(DATA_DIR / "kelas.csv", index=False)
+                st.success("✅ Perubahan data kelas berhasil disimpan!")
+        else:
+            st.warning("Data kelas belum tersedia")
+    
     # === TAB RUANGAN ===
     with tab_edit[3]:
-        file = DATA_DIR / "ruangan.csv"
+        if file_exists("ruangan.csv"):
+            df = pd.read_csv(DATA_DIR / "ruangan.csv")
+            df["tersedia_sesi"] = df["tersedia_sesi"].astype(str)
+            st.subheader("🏫 Data Ruangan")
+            
+            edited_df = st.data_editor(
+                df,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "kode_ruang": st.column_config.TextColumn("Kode*", required=True),
+                    "kapasitas": st.column_config.NumberColumn("Kapasitas*", min_value=1, step=1, required=True),
+                    "tersedia_hari": st.column_config.TextColumn("Hari Tersedia"),
+                    "tersedia_sesi": st.column_config.TextColumn("Sesi Tersedia")
+                }
+            )
+            
+            if st.button("💾 Simpan Perubahan Ruangan", use_container_width=True):
+                edited_df.to_csv(DATA_DIR / "ruangan.csv", index=False)
+                st.success("✅ Perubahan data ruangan berhasil disimpan!")
+        else:
+            st.warning("Data ruangan belum tersedia")
 
-        # Inisialisasi session state untuk edit ruangan
-        if "edit_ruangan_data" not in st.session_state:
-            st.session_state.edit_ruangan_data = None
-
-        # Form Tambah/Edit Data Ruangan
-        with st.form("form_ruangan"):
-            # Jika ada data untuk diedit, isi form dengan data tersebut
-            if st.session_state.edit_ruangan_data is not None:
-                edit_data = st.session_state.edit_ruangan_data
-                col1, col2 = st.columns(2)
-                with col1:
-                    kode = st.text_input("Kode Ruangan", value=edit_data["kode"])
-                    kapasitas = st.number_input("Kapasitas", min_value=1, step=1, value=int(edit_data["kapasitas"]))
-                with col2:
-                    hari_opsi = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-                    sesi_opsi = [1, 2, 3, 4, 5]
-
-                    default_hari = [h for h in edit_data["hari"] if h in hari_opsi] if edit_data["hari"] else []
-                    default_sesi = [s for s in edit_data["sesi"] if s in sesi_opsi] if edit_data["sesi"] else []
-
-                    hari = st.multiselect("Hari Tersedia", hari_opsi, default=default_hari)
-                    sesi = st.multiselect("Sesi Tersedia", sesi_opsi, default=default_sesi)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    submit = st.form_submit_button("💾 Update Ruangan")
-                with col2:
-                    cancel = st.form_submit_button("❌ Batal Edit")
-            else:
-                col1, col2 = st.columns(2)
-                with col1:
-                    kode = st.text_input("Kode Ruangan")
-                    kapasitas = st.number_input("Kapasitas", min_value=1, step=1)
-                with col2:
-                    hari = st.multiselect("Hari Tersedia", ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"])
-                    sesi = st.multiselect("Sesi Tersedia", [1, 2, 3, 4, 5])
-                submit = st.form_submit_button("➕ Tambah Ruangan")
-                cancel = False
-
-            if cancel:
-                st.session_state.edit_ruangan_data = None
-                st.rerun()
-
-            if submit:
-                if st.session_state.edit_ruangan_data is not None:
-                    # Mode Update
-                    if file.exists():
-                        df_ruangan = pd.read_csv(file)
-                        edit_idx = st.session_state.edit_ruangan_data["index"]
-                        df_ruangan.at[edit_idx, "kode_ruang"] = kode
-                        df_ruangan.at[edit_idx, "kapasitas"] = kapasitas
-                        df_ruangan.at[edit_idx, "tersedia_hari"] = ",".join(hari)
-                        df_ruangan.at[edit_idx, "tersedia_sesi"] = ",".join(map(str, sesi))
-                        df_ruangan.to_csv(file, index=False)
-                        st.success("✅ Ruangan berhasil diupdate!")
-                        st.session_state.edit_ruangan_data = None
-                        st.rerun()
-                else:
-                    # Mode Tambah
-                    if kode:
-                        new_data = pd.DataFrame([[kode, kapasitas, ",".join(hari), ",".join(map(str, sesi))]],
-                                              columns=["kode_ruang", "kapasitas", "tersedia_hari", "tersedia_sesi"])
-                        if file.exists():
-                            df_ruangan = pd.read_csv(file)
-                            df_ruangan = pd.concat([df_ruangan, new_data], ignore_index=True)
-                        else:
-                            df_ruangan = new_data
-                        df_ruangan.to_csv(file, index=False)
-                        st.success("✅ Ruangan berhasil ditambahkan!")
-                        st.rerun()
-
-        # === Tampilkan & Edit Data yang Ada ===
-        if file.exists():
-            df_ruangan = pd.read_csv(file)
-            st.markdown("### 🧾 Daftar Ruangan")
-
-            for idx, row in df_ruangan.iterrows():
-                col1, col2, col3, col4, col5, col6 = st.columns([2, 2, 2, 2, 1, 1])
-                with col1:
-                    st.text(row["kode_ruang"])
-                with col2:
-                    st.text(str(row["kapasitas"]))
-                with col3:
-                    st.text(str(row["tersedia_hari"]))
-                with col4:
-                    st.text(str(row["tersedia_sesi"]))
-                with col5:
-                    if st.button("✏️", key=f"edit_ruangan_{idx}"):
-                        # Set data untuk edit
-                        hari_list = str(row["tersedia_hari"]).split(",") if pd.notna(row["tersedia_hari"]) and str(row["tersedia_hari"]) != "" else []
-                        sesi_list = [int(float(x)) for x in str(row["tersedia_sesi"]).split(",") if x.strip()] if pd.notna(row["tersedia_sesi"]) and str(row["tersedia_sesi"]) != "" else []
-                        
-                        st.session_state.edit_ruangan_data = {
-                            "index": idx,
-                            "kode": row["kode_ruang"],
-                            "kapasitas": row["kapasitas"],
-                            "hari": hari_list,
-                            "sesi": sesi_list
-                        }
-                        st.rerun()
-                with col6:
-                    if st.button("🗑️", key=f"hapus_ruangan_{idx}"):
-                        df_ruangan.drop(index=idx, inplace=True)
-                        df_ruangan.reset_index(drop=True, inplace=True)
-                        df_ruangan.to_csv(file, index=False)
-                        st.rerun()
-
-# === MENU 3: JADWAL & RESET ===
-elif menu == "🔄 Jadwal & Reset":
-    st.header("🔄 Jadwal Otomatis & Reset")
+# === MENU 3: GENERATE JADWAL ===
+elif menu == "🤖 Generate Jadwal":
+    st.title("🤖 Generate Jadwal Otomatis")
     
     # Cek ketersediaan data
     files_exist = {
-        "matkul": (DATA_DIR / "matkul.csv").exists(),
-        "dosen": (DATA_DIR / "dosen.csv").exists(),
-        "kelas": (DATA_DIR / "kelas.csv").exists(),
-        "ruangan": (DATA_DIR / "ruangan.csv").exists()
+        "matkul": file_exists("matkul.csv"),
+        "dosen": file_exists("dosen.csv"),
+        "kelas": file_exists("kelas.csv"),
+        "ruangan": file_exists("ruangan.csv")
     }
     
     missing_files = [name for name, exists in files_exist.items() if not exists]
     
     if missing_files:
         st.error(f"❌ Data tidak lengkap! File yang hilang: {', '.join(missing_files)}")
-        st.info("💡 Silakan upload semua file CSV terlebih dahulu di menu **Upload Data CSV** atau tambahkan data di menu **Edit Data**.")
+        st.info("💡 Silakan upload semua file CSV terlebih dahulu di menu **Upload Data** atau tambahkan data di menu **Edit Data**.")
+        st.stop()
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("🔁 Reset Jadwal")
-        st.markdown("Hapus jadwal yang sudah ada dari layar dan file.")
-        if st.button("🔁 Reset Jadwal", use_container_width=True):
-            # Hapus dari session state
-            if "jadwal" in st.session_state:
-                del st.session_state["jadwal"]
-            # Hapus file jadwal
-            if JADWAL_PATH.exists():
-                JADWAL_PATH.unlink()
-            st.success("✅ Jadwal berhasil direset dan dihapus dari layar!")
-            st.rerun()
-
+        st.subheader("⚙️ Konfigurasi Penjadwalan")
+        
+        # Input parameter algoritma
+        population_size = st.slider("Ukuran Populasi", 50, 500, 100, 50)
+        generations = st.slider("Jumlah Generasi", 100, 1000, 300, 50)
+        mutation_rate = st.slider("Tingkat Mutasi", 0.01, 0.5, 0.1, 0.01)
+        
+        st.info("""
+        **Penjelasan Parameter:**
+        - **Ukuran Populasi**: Jumlah solusi yang dievaluasi setiap generasi
+        - **Jumlah Generasi**: Iterasi algoritma genetika
+        - **Tingkat Mutasi**: Probabilitas terjadinya mutasi pada kromosom
+        """)
+    
     with col2:
-        st.subheader("🤖 Jadwal Otomatis")
-        st.markdown("Buat jadwal kuliah otomatis berdasarkan data yang tersedia.")
+        st.subheader("🚀 Proses Penjadwalan")
         
-        # Disable button jika data tidak lengkap
-        disabled = bool(missing_files)
-        
-        if st.button("🔄 Jadwalkan Otomatis", use_container_width=True, disabled=disabled):
+        if st.button("🔄 Mulai Generate Jadwal", use_container_width=True, type="primary"):
             try:
-                # Load data dengan error handling yang lebih baik
+                # Load data
                 with st.spinner("📊 Memuat data..."):
                     matkul, dosen, kelas, ruangan = load_all_data()
                 
                 # Validasi data
                 if matkul.empty:
                     st.error("❌ Data mata kuliah kosong!")
-                elif dosen.empty:
-                    st.error("❌ Data dosen kosong!")
-                elif kelas.empty:
-                    st.error("❌ Data kelas kosong!")
-                elif ruangan.empty:
-                    st.error("❌ Data ruangan kosong!")
-                else:
-                    # Tampilkan informasi data yang akan diproses
-                    st.info(f"📋 Data yang akan diproses: {len(matkul)} mata kuliah, {len(dosen)} dosen, {len(kelas)} kelas, {len(ruangan)} ruangan")
-                    
-                    # Cek apakah mata kuliah memiliki kolom yang diperlukan
-                    required_matkul_cols = ['kode_matkul', 'nama_matkul', 'sks']
-                    missing_matkul_cols = [col for col in required_matkul_cols if col not in matkul.columns]
-                    
-                    if missing_matkul_cols:
-                        st.error(f"❌ Kolom yang hilang di data mata kuliah: {', '.join(missing_matkul_cols)}")
-                    else:
-                        # PENTING: Tambahkan kolom kelas dan dosen jika tidak ada
-                        if 'kelas' not in matkul.columns:
-                            # Jika tidak ada kolom kelas, buat mapping otomatis
-                            kelas_list = kelas['kode_kelas'].tolist()
-                            matkul['kelas'] = [kelas_list[i % len(kelas_list)] for i in range(len(matkul))]
-                            st.warning("⚠️ Kolom 'kelas' tidak ditemukan di data mata kuliah. Menggunakan mapping otomatis.")
-                        
-                        if 'dosen' not in matkul.columns:
-                            # Jika tidak ada kolom dosen, buat mapping otomatis
-                            dosen_list = dosen['kode_dosen'].tolist()
-                            matkul['dosen'] = [dosen_list[i % len(dosen_list)] for i in range(len(matkul))]
-                            st.warning("⚠️ Kolom 'dosen' tidak ditemukan di data mata kuliah. Menggunakan mapping otomatis.")
-                        
-                        with st.spinner("🔄 Membuat jadwal..."):
-                            df_jadwal = jadwalkan(matkul, dosen, kelas, ruangan)
-                        
-                        if not df_jadwal.empty:
-                            st.session_state["jadwal"] = df_jadwal
-                            st.success(f"✅ Jadwal berhasil dibuat dengan {len(df_jadwal)} mata kuliah terjadwal!")
-                            st.rerun()
-                        else:
-                            st.error("❌ Tidak ada mata kuliah yang berhasil dijadwal. Periksa kembali data Anda.")
-                            st.info("""
-                            **Kemungkinan penyebab:**
-                            - Kapasitas ruangan terlalu kecil untuk jumlah mahasiswa
-                            - Preferensi dosen tidak cocok dengan ketersediaan ruangan
-                            - Konflik jadwal yang tidak dapat diselesaikan
-                            """)
+                    st.stop()
                 
-            except FileNotFoundError as e:
-                st.error(f"❌ File tidak ditemukan: {e}")
-                st.info("💡 Pastikan semua file CSV sudah diupload di menu **Upload Data CSV**.")
+                # Proses penjadwalan
+                with st.spinner("🧠 Menghitung jadwal optimal..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Simulasi progress
+                    for i in range(10):
+                        progress = (i + 1) * 10
+                        progress_bar.progress(progress)
+                        status_text.text(f"Proses penjadwalan... {progress}%")
+                        time.sleep(0.2)
+                    
+                    # Panggil fungsi penjadwalan
+                    df_jadwal = jadwalkan(
+                        matkul, 
+                        dosen, 
+                        kelas, 
+                        ruangan,
+                        population_size=population_size,
+                        generations=generations,
+                        mutation_rate=mutation_rate
+                    )
+                    
+                    progress_bar.progress(100)
+                    status_text.text("✅ Jadwal berhasil dibuat!")
+                    time.sleep(1)
+                
+                # Simpan hasil
+                st.session_state["jadwal"] = df_jadwal
+                df_jadwal.to_csv(JADWAL_PATH, index=False)
+                
+                st.success(f"✅ Jadwal berhasil dibuat dengan {len(df_jadwal)} mata kuliah terjadwal!")
+                st.balloons()
+                
+                # Tampilkan preview
+                st.subheader("📋 Preview Jadwal")
+                st.dataframe(df_jadwal.head())
+                
+                # Tombol untuk lihat hasil lengkap
+                if st.button("Lihat Jadwal Lengkap", use_container_width=True):
+                    st.experimental_set_query_params(menu="📋 Hasil Jadwal")
+                    st.rerun()
+                
             except Exception as e:
                 st.error(f"❌ Error saat menjadwalkan: {str(e)}")
-                st.info("💡 Periksa kembali format data CSV Anda.")
-                
-                # Tampilkan detail error untuk debugging
-                with st.expander("🔍 Detail Error (untuk debugging)"):
-                    st.code(str(e))
+                with st.expander("🔍 Detail Error"):
+                    st.exception(e)
 
-    # === TAMPILKAN JADWAL JIKA ADA ===
-    st.markdown("---")
+# === MENU 4: HASIL JADWAL ===
+elif menu == "📋 Hasil Jadwal":
+    st.title("📋 Hasil Jadwal Kuliah")
     
     if "jadwal" in st.session_state:
-        st.subheader("📋 Jadwal Kuliah")
         df_jadwal = st.session_state["jadwal"]
-        
-        # Tampilkan ringkasan
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("📚 Mata Kuliah", len(df_jadwal))
-        with col2:
-            st.metric("👨‍🏫 Dosen", df_jadwal['dosen'].nunique())
-        with col3:
-            st.metric("🏫 Ruangan", df_jadwal['ruangan'].nunique())
-        with col4:
-            st.metric("👥 Kelas", df_jadwal['kelas'].nunique())
-        
-        # Tampilkan tabel jadwal
-        st.dataframe(df_jadwal, use_container_width=True)
-        
-        # TAMBAHAN: Visualisasi Jadwal
-        st.subheader("📊 Visualisasi Jadwal")
-        
-        # Tab untuk berbagai tampilan
-        tab1, tab2, tab3 = st.tabs(["Per Hari", "Per Ruangan", "Grid Jadwal"])
-        
-        with tab1:
-            # Jadwal per Hari
-            hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-            selected_hari = st.selectbox("Pilih Hari", hari_list)
-            
-            df_hari = df_jadwal[df_jadwal['hari'] == selected_hari]
-            if not df_hari.empty:
-                # Urutkan berdasarkan sesi
-                df_hari = df_hari.sort_values('sesi')
-                
-                # Tampilkan tabel
-                st.dataframe(df_hari[['sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen', 'ruangan']])
-                
-                # Statistik per hari
-                st.markdown(f"**Statistik Hari {selected_hari}:**")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Jumlah Sesi Terisi", len(df_hari))
-                with col2:
-                    st.metric("Jumlah Ruangan Terpakai", df_hari['ruangan'].nunique())
-                with col3:
-                    st.metric("Jumlah Dosen Mengajar", df_hari['dosen'].nunique())
-            else:
-                st.info(f"Tidak ada jadwal pada hari {selected_hari}")
-        
-        with tab2:
-            # Jadwal per Ruangan
-            ruangan_list = sorted(df_jadwal['ruangan'].unique())
-            selected_ruangan = st.selectbox("Pilih Ruangan", ruangan_list)
-            
-            df_ruangan = df_jadwal[df_jadwal['ruangan'] == selected_ruangan]
-            if not df_ruangan.empty:
-                # Urutkan berdasarkan hari dan sesi
-                hari_order = {"Senin": 1, "Selasa": 2, "Rabu": 3, "Kamis": 4, "Jumat": 5}
-                df_ruangan['hari_num'] = df_ruangan['hari'].map(hari_order)
-                df_ruangan = df_ruangan.sort_values(['hari_num', 'sesi'])
-                
-                # Tampilkan tabel
-                st.dataframe(df_ruangan[['hari', 'sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen']])
-                
-                # Statistik per ruangan
-                # Load data ruangan untuk kapasitas
-                ruangan_df = pd.read_csv(DATA_DIR / "ruangan.csv")
-                kapasitas = ruangan_df[ruangan_df['kode_ruang'] == selected_ruangan]['kapasitas'].values[0]
-                st.markdown(f"**Statistik Ruangan {selected_ruangan}:**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Kapasitas", kapasitas)
-                with col2:
-                    st.metric("Jumlah Sesi Terisi", len(df_ruangan))
-                
-                # Tingkat penggunaan
-                total_sesi = 25  # 5 hari x 5 sesi
-                persentase = (len(df_ruangan) / total_sesi) * 100
-                st.progress(int(persentase))
-                st.caption(f"Tingkat penggunaan: {persentase:.1f}%")
-            else:
-                st.info(f"Tidak ada jadwal di ruangan {selected_ruangan}")
-        
-        with tab3:
-            # Grid Jadwal
-            st.subheader("Grid Jadwal Kuliah")
-            
-            # Buat grid jadwal
-            hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-            sesi_list = [1, 2, 3, 4, 5]
-            ruangan_list = sorted(df_jadwal['ruangan'].unique())
-            
-            # Pilih ruangan untuk visualisasi
-            selected_ruangan_grid = st.selectbox("Pilih Ruangan untuk Grid", ruangan_list)
-            
-            # Buat grid 5x5 (hari x sesi)
-            grid = []
-            for sesi in sesi_list:
-                row = []
-                for hari in hari_list:
-                    jadwal = df_jadwal[(df_jadwal['hari'] == hari) & 
-                                      (df_jadwal['sesi'] == sesi) &
-                                      (df_jadwal['ruangan'] == selected_ruangan_grid)]
-                    
-                    if not jadwal.empty:
-                        matkul = jadwal.iloc[0]
-                        cell = f"{matkul['kode_matkul']} - {matkul['nama_matkul'][:15]}...\n"
-                        cell += f"Kelas: {matkul['kelas']}\nDosen: {matkul['dosen']}"
-                        row.append(cell)
-                    else:
-                        row.append("")
-                grid.append(row)
-            
-            # Tampilkan grid sebagai tabel
-            grid_df = pd.DataFrame(grid, columns=hari_list, index=[f"Sesi {s}" for s in sesi_list])
-            
-            # Style untuk grid
-            def highlight_cell(val):
-                if val:
-                    return 'background-color: #e6f7ff; border: 1px solid #1890ff;'
-                return ''
-            
-            st.dataframe(grid_df.style.applymap(highlight_cell))
-            
-            # Legenda
-            st.markdown("""
-            **Legenda:**
-            - Setiap sel mewakili satu sesi di ruangan tertentu
-            - Sel kosong berarti ruangan tersedia pada sesi tersebut
-            """)
-        
-        # Tombol Download Jadwal
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            st.download_button(
-                label="⬇️ Download CSV",
-                data=df_jadwal.to_csv(index=False),
-                file_name="jadwal_kuliah.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        
     elif JADWAL_PATH.exists():
         try:
             df_jadwal = pd.read_csv(JADWAL_PATH)
             st.session_state["jadwal"] = df_jadwal
-            st.subheader("📋 Jadwal Kuliah (dari file)")
-            
-            # Tampilkan ringkasan
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("📚 Mata Kuliah", len(df_jadwal))
-            with col2:
-                st.metric("👨‍🏫 Dosen", df_jadwal['dosen'].nunique())
-            with col3:
-                st.metric("🏫 Ruangan", df_jadwal['ruangan'].nunique())
-            with col4:
-                st.metric("👥 Kelas", df_jadwal['kelas'].nunique())
-            
-            st.dataframe(df_jadwal, use_container_width=True)
-            
-            # TAMBAHAN: Visualisasi Jadwal untuk jadwal dari file
-            st.subheader("📊 Visualisasi Jadwal")
-            tab1, tab2, tab3 = st.tabs(["Per Hari", "Per Ruangan", "Grid Jadwal"])
-            
-            with tab1:
-                hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-                selected_hari = st.selectbox("Pilih Hari", hari_list, key="hari_select_file")
-                df_hari = df_jadwal[df_jadwal['hari'] == selected_hari]
-                if not df_hari.empty:
-                    df_hari = df_hari.sort_values('sesi')
-                    st.dataframe(df_hari[['sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen', 'ruangan']])
-                    st.markdown(f"**Statistik Hari {selected_hari}:**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Jumlah Sesi Terisi", len(df_hari))
-                    with col2:
-                        st.metric("Jumlah Ruangan Terpakai", df_hari['ruangan'].nunique())
-                    with col3:
-                        st.metric("Jumlah Dosen Mengajar", df_hari['dosen'].nunique())
-                else:
-                    st.info(f"Tidak ada jadwal pada hari {selected_hari}")
-            
-            with tab2:
-                ruangan_list = sorted(df_jadwal['ruangan'].unique())
-                selected_ruangan = st.selectbox("Pilih Ruangan", ruangan_list, key="ruangan_select_file")
-                df_ruangan = df_jadwal[df_jadwal['ruangan'] == selected_ruangan]
-                if not df_ruangan.empty:
-                    hari_order = {"Senin": 1, "Selasa": 2, "Rabu": 3, "Kamis": 4, "Jumat": 5}
-                    df_ruangan['hari_num'] = df_ruangan['hari'].map(hari_order)
-                    df_ruangan = df_ruangan.sort_values(['hari_num', 'sesi'])
-                    st.dataframe(df_ruangan[['hari', 'sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen']])
-                    ruangan_df = pd.read_csv(DATA_DIR / "ruangan.csv")
-                    kapasitas = ruangan_df[ruangan_df['kode_ruang'] == selected_ruangan]['kapasitas'].values[0]
-                    st.markdown(f"**Statistik Ruangan {selected_ruangan}:**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Kapasitas", kapasitas)
-                    with col2:
-                        st.metric("Jumlah Sesi Terisi", len(df_ruangan))
-                    total_sesi = 25
-                    persentase = (len(df_ruangan) / total_sesi) * 100
-                    st.progress(int(persentase))
-                    st.caption(f"Tingkat penggunaan: {persentase:.1f}%")
-                else:
-                    st.info(f"Tidak ada jadwal di ruangan {selected_ruangan}")
-            
-            with tab3:
-                st.subheader("Grid Jadwal Kuliah")
-                hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-                sesi_list = [1, 2, 3, 4, 5]
-                ruangan_list = sorted(df_jadwal['ruangan'].unique())
-                selected_ruangan_grid = st.selectbox("Pilih Ruangan untuk Grid", ruangan_list, key="grid_ruangan_file")
-                grid = []
-                for sesi in sesi_list:
-                    row = []
-                    for hari in hari_list:
-                        jadwal = df_jadwal[(df_jadwal['hari'] == hari) & 
-                                          (df_jadwal['sesi'] == sesi) &
-                                          (df_jadwal['ruangan'] == selected_ruangan_grid)]
-                        if not jadwal.empty:
-                            matkul = jadwal.iloc[0]
-                            cell = f"{matkul['kode_matkul']} - {matkul['nama_matkul'][:15]}...\n"
-                            cell += f"Kelas: {matkul['kelas']}\nDosen: {matkul['dosen']}"
-                            row.append(cell)
-                        else:
-                            row.append("")
-                    grid.append(row)
-                grid_df = pd.DataFrame(grid, columns=hari_list, index=[f"Sesi {s}" for s in sesi_list])
-                def highlight_cell(val):
-                    if val:
-                        return 'background-color: #e6f7ff; border: 1px solid #1890ff;'
-                    return ''
-                st.dataframe(grid_df.style.applymap(highlight_cell))
-                st.markdown("""
-                **Legenda:**
-                - Setiap sel mewakili satu sesi di ruangan tertentu
-                - Sel kosong berarti ruangan tersedia pada sesi tersebut
-                """)
-            
-            # Tombol Download Jadwal
-            col1, col2 = st.columns([3, 1])
-            with col2:
-                st.download_button(
-                    label="⬇️ Download CSV",
-                    data=df_jadwal.to_csv(index=False),
-                    file_name="jadwal_kuliah.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-        except Exception as e:
-            st.error(f"❌ Error membaca file jadwal: {e}")
-            if st.button("🗑️ Hapus File Jadwal Corrupt"):
-                JADWAL_PATH.unlink()
-                st.success("✅ File jadwal yang corrupt telah dihapus.")
-                st.rerun()
+        except:
+            st.error("❌ Gagal memuat file jadwal. Format mungkin tidak sesuai.")
+            st.stop()
     else:
-        st.info("💡 Belum ada jadwal yang dibuat. Silakan buat jadwal otomatis terlebih dahulu.")
+        st.warning("Belum ada jadwal yang dibuat. Silakan buat jadwal terlebih dahulu di menu Generate Jadwal.")
+        st.stop()
+    
+    # Statistik jadwal
+    st.subheader("📊 Statistik Jadwal")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Mata Kuliah", len(df_jadwal))
+    with col2:
+        st.metric("Jumlah Dosen Terlibat", df_jadwal['dosen'].nunique())
+    with col3:
+        st.metric("Jumlah Ruangan Digunakan", df_jadwal['ruangan'].nunique())
+    with col4:
+        st.metric("Jumlah Kelas Terjadwal", df_jadwal['kelas'].nunique())
+    
+    # Tampilkan jadwal
+    st.subheader("📅 Jadwal Kuliah")
+    
+    # Filter data
+    col1, col2 = st.columns(2)
+    with col1:
+        hari_filter = st.multiselect("Filter Hari", options=df_jadwal['hari'].unique(), default=df_jadwal['hari'].unique())
+    with col2:
+        dosen_filter = st.multiselect("Filter Dosen", options=df_jadwal['dosen'].unique(), default=df_jadwal['dosen'].unique())
+    
+    filtered_df = df_jadwal[
+        (df_jadwal['hari'].isin(hari_filter)) & 
+        (df_jadwal['dosen'].isin(dosen_filter))
+    ]
+    
+    st.dataframe(filtered_df, use_container_width=True, height=500)
+    
+    # Visualisasi jadwal
+    st.subheader("📊 Visualisasi Jadwal")
+    tab1, tab2 = st.tabs(["Per Hari", "Per Ruangan"])
+    
+    with tab1:
+        hari_pilihan = st.selectbox("Pilih Hari", options=df_jadwal['hari'].unique())
+        hari_df = df_jadwal[df_jadwal['hari'] == hari_pilihan].sort_values('sesi')
+        
+        if not hari_df.empty:
+            st.bar_chart(
+                hari_df.groupby('sesi').size()
+            )
+            
+            st.subheader(f"Detail Jadwal Hari {hari_pilihan}")
+            st.dataframe(hari_df)
+        else:
+            st.info(f"Tidak ada jadwal pada hari {hari_pilihan}")
+    
+    with tab2:
+        ruangan_pilihan = st.selectbox("Pilih Ruangan", options=df_jadwal['ruangan'].unique())
+        ruangan_df = df_jadwal[df_jadwal['ruangan'] == ruangan_pilihan].sort_values(['hari', 'sesi'])
+        
+        if not ruangan_df.empty:
+            # Buat pivot table untuk heatmap
+            pivot_df = ruangan_df.pivot_table(
+                index='sesi', 
+                columns='hari', 
+                values='nama_matkul', 
+                aggfunc=lambda x: ', '.join(x)
+            ).fillna('')
+            
+            # Tampilkan heatmap tanpa styling
+            st.dataframe(pivot_df)
+        else:
+            st.info(f"Tidak ada jadwal di ruangan {ruangan_pilihan}")
+    
+    # Ekspor jadwal
+    st.subheader("📤 Ekspor Jadwal")
+    csv = df_jadwal.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Jadwal (CSV)",
+        data=csv,
+        file_name="jadwal_kuliah.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
 
-# === FOOTER INFO ===
+# === SIDEBAR FOOTER ===
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📊 Status Data")
 
 # Cek ketersediaan file
 files_status = {
-    "Mata Kuliah": (DATA_DIR / "matkul.csv").exists(),
-    "Dosen": (DATA_DIR / "dosen.csv").exists(),
-    "Kelas": (DATA_DIR / "kelas.csv").exists(),
-    "Ruangan": (DATA_DIR / "ruangan.csv").exists()
+    "Mata Kuliah": file_exists("matkul.csv"),
+    "Dosen": file_exists("dosen.csv"),
+    "Kelas": file_exists("kelas.csv"),
+    "Ruangan": file_exists("ruangan.csv")
 }
 
 for name, exists in files_status.items():
@@ -879,3 +654,16 @@ for name, exists in files_status.items():
         st.sidebar.success(f"✅ {name}")
     else:
         st.sidebar.error(f"❌ {name}")
+
+# Reset aplikasi
+if st.sidebar.button("🔄 Reset Aplikasi", use_container_width=True):
+    for file in ["matkul.csv", "dosen.csv", "kelas.csv", "ruangan.csv"]:
+        path = DATA_DIR / file
+        if path.exists():
+            path.unlink()
+    if "jadwal" in st.session_state:
+        del st.session_state["jadwal"]
+    st.sidebar.success("Aplikasi berhasil direset!")
+    time.sleep(1)
+    st.experimental_set_query_params(menu="🏠 Beranda")
+    st.rerun()
