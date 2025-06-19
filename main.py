@@ -447,8 +447,8 @@ elif menu == "✏️ Edit Data":
             st.warning("Data ruangan belum tersedia")
 
 # === MENU 3: GENERATE JADWAL ===
-elif menu == "🤖 Generate Jadwal":
-    st.title("🤖 Generate Jadwal Otomatis")
+elif menu == "🗓 Generate Jadwal":
+    st.title("🗓 Generate Jadwal Otomatis")
     
     # Cek ketersediaan data
     files_exist = {
