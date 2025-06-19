@@ -1,10 +1,3 @@
-# scheduler_learning_searching.py
-"""
-Versi aman dari scheduler.py
-Menggunakan AI berbasis Genetic Algorithm (GA)
-Menerapkan prinsip Learning (via evolusi fitness) & Searching (via heuristik GA)
-"""
-
 import random
 import pandas as pd
 from typing import List, Tuple
@@ -173,12 +166,19 @@ class AIScheduler:
                 "nama_matkul": m['nama_matkul'],
                 "kelas": m['kelas'],
                 "dosen": m['dosen'],
-                "ruangan": r,
-                "fitness_score": sched.fitness
+                "ruangan": r
             })
         return pd.DataFrame(rows)
 
-def jadwalkan_ai(matkul, dosen, kelas, ruangan):
-    ai = AIScheduler(matkul, dosen, kelas, ruangan)
+def jadwalkan_ai(matkul, dosen, kelas, ruangan, **kwargs):
+    ai = AIScheduler(
+        matkul, 
+        dosen, 
+        kelas, 
+        ruangan,
+        population_size=kwargs.get('population_size', 100),
+        generations=kwargs.get('generations', 300),
+        mutation_rate=kwargs.get('mutation_rate', 0.1)
+    )
     best = ai.evolve()
     return ai.to_dataframe(best)
