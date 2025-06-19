@@ -226,7 +226,7 @@ elif menu == "📤 Upload Data":
                 nama = st.text_input("Nama Mata Kuliah*", placeholder="Kalkulus")
                 sks = st.number_input("SKS*", min_value=1, max_value=6, value=3)
                 kelas = st.text_input("Kelas*", placeholder="A1")
-                dosen = st.text_input("Dosen Pengampu*", placeholder="D001")
+                dosen = st.text_input("Kode Dosen Pengampu*", placeholder="D001")
                 
                 submitted = st.form_submit_button("💾 Simpan Mata Kuliah")
                 if submitted:
