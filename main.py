@@ -28,7 +28,7 @@ JADWAL_PATH = OUTPUT_DIR / "jadwal_kuliah.csv"
 st.sidebar.title("📅 Menu Navigasi")
 menu = st.sidebar.selectbox(
     "Pilih Menu:",
-    ["🏠 Beranda", "📤 Upload Data", "✏️ Edit Data", "🤖 Generate Jadwal", "📋 Hasil Jadwal"]
+    ["🏠 Beranda", "📤 Upload Data", "✏️ Edit Data", "🗓 Generate Jadwal", "📋 Hasil Jadwal"]
 )
 
 # === FUNGSI HELPER ===
