@@ -494,7 +494,7 @@ elif menu == "✏️ Edit Data":
                         df_ruangan.to_csv(file, index=False)
                         st.rerun()
 
-# === MENU 3: JADWAL & RESET === (Bagian yang diperbaiki untuk main.py)
+# === MENU 3: JADWAL & RESET ===
 elif menu == "🔄 Jadwal & Reset":
     st.header("🔄 Jadwal Otomatis & Reset")
     
@@ -581,7 +581,7 @@ elif menu == "🔄 Jadwal & Reset":
                             st.success(f"✅ Jadwal berhasil dibuat dengan {len(df_jadwal)} mata kuliah terjadwal!")
                             st.rerun()
                         else:
-                            st.error("❌ Tidak ada mata kuliah yang berhasil dijadwalkan. Periksa kembali data Anda.")
+                            st.error("❌ Tidak ada mata kuliah yang berhasil dijadwal. Periksa kembali data Anda.")
                             st.info("""
                             **Kemungkinan penyebab:**
                             - Kapasitas ruangan terlalu kecil untuk jumlah mahasiswa
@@ -621,6 +621,119 @@ elif menu == "🔄 Jadwal & Reset":
         # Tampilkan tabel jadwal
         st.dataframe(df_jadwal, use_container_width=True)
         
+        # TAMBAHAN: Visualisasi Jadwal
+        st.subheader("📊 Visualisasi Jadwal")
+        
+        # Tab untuk berbagai tampilan
+        tab1, tab2, tab3 = st.tabs(["Per Hari", "Per Ruangan", "Grid Jadwal"])
+        
+        with tab1:
+            # Jadwal per Hari
+            hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
+            selected_hari = st.selectbox("Pilih Hari", hari_list)
+            
+            df_hari = df_jadwal[df_jadwal['hari'] == selected_hari]
+            if not df_hari.empty:
+                # Urutkan berdasarkan sesi
+                df_hari = df_hari.sort_values('sesi')
+                
+                # Tampilkan tabel
+                st.dataframe(df_hari[['sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen', 'ruangan']])
+                
+                # Statistik per hari
+                st.markdown(f"**Statistik Hari {selected_hari}:**")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Jumlah Sesi Terisi", len(df_hari))
+                with col2:
+                    st.metric("Jumlah Ruangan Terpakai", df_hari['ruangan'].nunique())
+                with col3:
+                    st.metric("Jumlah Dosen Mengajar", df_hari['dosen'].nunique())
+            else:
+                st.info(f"Tidak ada jadwal pada hari {selected_hari}")
+        
+        with tab2:
+            # Jadwal per Ruangan
+            ruangan_list = sorted(df_jadwal['ruangan'].unique())
+            selected_ruangan = st.selectbox("Pilih Ruangan", ruangan_list)
+            
+            df_ruangan = df_jadwal[df_jadwal['ruangan'] == selected_ruangan]
+            if not df_ruangan.empty:
+                # Urutkan berdasarkan hari dan sesi
+                hari_order = {"Senin": 1, "Selasa": 2, "Rabu": 3, "Kamis": 4, "Jumat": 5}
+                df_ruangan['hari_num'] = df_ruangan['hari'].map(hari_order)
+                df_ruangan = df_ruangan.sort_values(['hari_num', 'sesi'])
+                
+                # Tampilkan tabel
+                st.dataframe(df_ruangan[['hari', 'sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen']])
+                
+                # Statistik per ruangan
+                # Load data ruangan untuk kapasitas
+                ruangan_df = pd.read_csv(DATA_DIR / "ruangan.csv")
+                kapasitas = ruangan_df[ruangan_df['kode_ruang'] == selected_ruangan]['kapasitas'].values[0]
+                st.markdown(f"**Statistik Ruangan {selected_ruangan}:**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Kapasitas", kapasitas)
+                with col2:
+                    st.metric("Jumlah Sesi Terisi", len(df_ruangan))
+                
+                # Tingkat penggunaan
+                total_sesi = 25  # 5 hari x 5 sesi
+                persentase = (len(df_ruangan) / total_sesi) * 100
+                st.progress(int(persentase))
+                st.caption(f"Tingkat penggunaan: {persentase:.1f}%")
+            else:
+                st.info(f"Tidak ada jadwal di ruangan {selected_ruangan}")
+        
+        with tab3:
+            # Grid Jadwal
+            st.subheader("Grid Jadwal Kuliah")
+            
+            # Buat grid jadwal
+            hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
+            sesi_list = [1, 2, 3, 4, 5]
+            ruangan_list = sorted(df_jadwal['ruangan'].unique())
+            
+            # Pilih ruangan untuk visualisasi
+            selected_ruangan_grid = st.selectbox("Pilih Ruangan untuk Grid", ruangan_list)
+            
+            # Buat grid 5x5 (hari x sesi)
+            grid = []
+            for sesi in sesi_list:
+                row = []
+                for hari in hari_list:
+                    jadwal = df_jadwal[(df_jadwal['hari'] == hari) & 
+                                      (df_jadwal['sesi'] == sesi) &
+                                      (df_jadwal['ruangan'] == selected_ruangan_grid)]
+                    
+                    if not jadwal.empty:
+                        matkul = jadwal.iloc[0]
+                        cell = f"{matkul['kode_matkul']} - {matkul['nama_matkul'][:15]}...\n"
+                        cell += f"Kelas: {matkul['kelas']}\nDosen: {matkul['dosen']}"
+                        row.append(cell)
+                    else:
+                        row.append("")
+                grid.append(row)
+            
+            # Tampilkan grid sebagai tabel
+            grid_df = pd.DataFrame(grid, columns=hari_list, index=[f"Sesi {s}" for s in sesi_list])
+            
+            # Style untuk grid
+            def highlight_cell(val):
+                if val:
+                    return 'background-color: #e6f7ff; border: 1px solid #1890ff;'
+                return ''
+            
+            st.dataframe(grid_df.style.applymap(highlight_cell))
+            
+            # Legenda
+            st.markdown("""
+            **Legenda:**
+            - Setiap sel mewakili satu sesi di ruangan tertentu
+            - Sel kosong berarti ruangan tersedia pada sesi tersebut
+            """)
+        
         # Tombol Download Jadwal
         col1, col2 = st.columns([3, 1])
         with col2:
@@ -645,11 +758,90 @@ elif menu == "🔄 Jadwal & Reset":
             with col2:
                 st.metric("👨‍🏫 Dosen", df_jadwal['dosen'].nunique())
             with col3:
-                st.metric("🏫 Ruangan", df_jadwal['ruang'].nunique())
+                st.metric("🏫 Ruangan", df_jadwal['ruangan'].nunique())
             with col4:
                 st.metric("👥 Kelas", df_jadwal['kelas'].nunique())
             
             st.dataframe(df_jadwal, use_container_width=True)
+            
+            # TAMBAHAN: Visualisasi Jadwal untuk jadwal dari file
+            st.subheader("📊 Visualisasi Jadwal")
+            tab1, tab2, tab3 = st.tabs(["Per Hari", "Per Ruangan", "Grid Jadwal"])
+            
+            with tab1:
+                hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
+                selected_hari = st.selectbox("Pilih Hari", hari_list, key="hari_select_file")
+                df_hari = df_jadwal[df_jadwal['hari'] == selected_hari]
+                if not df_hari.empty:
+                    df_hari = df_hari.sort_values('sesi')
+                    st.dataframe(df_hari[['sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen', 'ruangan']])
+                    st.markdown(f"**Statistik Hari {selected_hari}:**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Jumlah Sesi Terisi", len(df_hari))
+                    with col2:
+                        st.metric("Jumlah Ruangan Terpakai", df_hari['ruangan'].nunique())
+                    with col3:
+                        st.metric("Jumlah Dosen Mengajar", df_hari['dosen'].nunique())
+                else:
+                    st.info(f"Tidak ada jadwal pada hari {selected_hari}")
+            
+            with tab2:
+                ruangan_list = sorted(df_jadwal['ruangan'].unique())
+                selected_ruangan = st.selectbox("Pilih Ruangan", ruangan_list, key="ruangan_select_file")
+                df_ruangan = df_jadwal[df_jadwal['ruangan'] == selected_ruangan]
+                if not df_ruangan.empty:
+                    hari_order = {"Senin": 1, "Selasa": 2, "Rabu": 3, "Kamis": 4, "Jumat": 5}
+                    df_ruangan['hari_num'] = df_ruangan['hari'].map(hari_order)
+                    df_ruangan = df_ruangan.sort_values(['hari_num', 'sesi'])
+                    st.dataframe(df_ruangan[['hari', 'sesi', 'kode_matkul', 'nama_matkul', 'kelas', 'dosen']])
+                    ruangan_df = pd.read_csv(DATA_DIR / "ruangan.csv")
+                    kapasitas = ruangan_df[ruangan_df['kode_ruang'] == selected_ruangan]['kapasitas'].values[0]
+                    st.markdown(f"**Statistik Ruangan {selected_ruangan}:**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Kapasitas", kapasitas)
+                    with col2:
+                        st.metric("Jumlah Sesi Terisi", len(df_ruangan))
+                    total_sesi = 25
+                    persentase = (len(df_ruangan) / total_sesi) * 100
+                    st.progress(int(persentase))
+                    st.caption(f"Tingkat penggunaan: {persentase:.1f}%")
+                else:
+                    st.info(f"Tidak ada jadwal di ruangan {selected_ruangan}")
+            
+            with tab3:
+                st.subheader("Grid Jadwal Kuliah")
+                hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
+                sesi_list = [1, 2, 3, 4, 5]
+                ruangan_list = sorted(df_jadwal['ruangan'].unique())
+                selected_ruangan_grid = st.selectbox("Pilih Ruangan untuk Grid", ruangan_list, key="grid_ruangan_file")
+                grid = []
+                for sesi in sesi_list:
+                    row = []
+                    for hari in hari_list:
+                        jadwal = df_jadwal[(df_jadwal['hari'] == hari) & 
+                                          (df_jadwal['sesi'] == sesi) &
+                                          (df_jadwal['ruangan'] == selected_ruangan_grid)]
+                        if not jadwal.empty:
+                            matkul = jadwal.iloc[0]
+                            cell = f"{matkul['kode_matkul']} - {matkul['nama_matkul'][:15]}...\n"
+                            cell += f"Kelas: {matkul['kelas']}\nDosen: {matkul['dosen']}"
+                            row.append(cell)
+                        else:
+                            row.append("")
+                    grid.append(row)
+                grid_df = pd.DataFrame(grid, columns=hari_list, index=[f"Sesi {s}" for s in sesi_list])
+                def highlight_cell(val):
+                    if val:
+                        return 'background-color: #e6f7ff; border: 1px solid #1890ff;'
+                    return ''
+                st.dataframe(grid_df.style.applymap(highlight_cell))
+                st.markdown("""
+                **Legenda:**
+                - Setiap sel mewakili satu sesi di ruangan tertentu
+                - Sel kosong berarti ruangan tersedia pada sesi tersebut
+                """)
             
             # Tombol Download Jadwal
             col1, col2 = st.columns([3, 1])
